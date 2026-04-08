@@ -33,9 +33,11 @@ echo "Loading Roassal Full and exporters..."
     do: [ :warning | warning load ].
 "
 
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+kill -9 $(lsof -tiTCP:8080 -sTCP:LISTEN)
 
 # Load full Roassal version and exporters
-echo "Loading Roassal Full and exporters..."
+echo "Loading Seaside Full and exporters..."
 ./pharo Pharo.image eval --save "
 Metacello new
     baseline: 'Seaside3';
