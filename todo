@@ -6,5 +6,8 @@
 - eval
 
 
-- bench on package never seen 
+- bench on packages never seen 
+- stat on the bench
 
+- first figure : heurisitc based code candidates generator 
+- second figure : LLM based code candidates generator 

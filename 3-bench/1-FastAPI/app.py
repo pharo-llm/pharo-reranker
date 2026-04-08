@@ -25,6 +25,36 @@ from sentence_transformers import SentenceTransformer
 
 tfidf_vectorizer = load(TFIDF_PATH)
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# ==================================================
+# Transformers for base Qwen3-Reranker models
+# ==================================================
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import torch
+
+BASE_MODEL_NAMES = {
+    "qwen3-base-0.6b": "Qwen/Qwen3-Reranker-0.6B",
+    "qwen3-base-4b": "Qwen/Qwen3-Reranker-4B",
+    "qwen3-base-8b": "Qwen/Qwen3-Reranker-8B",
+}
+
+BASE_MODELS: Dict[str, Dict[str, Any]] = {}
+
+for alias, model_id in BASE_MODEL_NAMES.items():
+    print(f"Loading base model: {alias} ({model_id})")
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_id,
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
+    )
+    model.eval()
+    BASE_MODELS[alias] = {
+        "tokenizer": tokenizer,
+        "model": model,
+    }
+    print(f" - {alias} loaded successfully")
+
 # ==================================================
 # Model registry
 # ==================================================
@@ -237,18 +267,11 @@ def build_feature_matrix(
 # ==================================================
 # Ranking endpoint
 # ==================================================
+ALL_MODEL_KEYS = list(MODELS.keys()) + list(BASE_MODELS.keys())
+
 @app.post("/rank")
 def rank(req: RankRequest) -> Dict[str, Any]:
     model_name = req.model or "catboost-base"
-
-    if model_name not in MODELS:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": f"Unknown model '{model_name}'",
-                "available_models": list(MODELS.keys()),
-            },
-        )
 
     candidates = req.candidates or []
     context = req.context or ""
@@ -261,6 +284,50 @@ def rank(req: RankRequest) -> Dict[str, Any]:
         }
 
     pruned = sorted(candidates, key=lambda c: (len(c), c))[:20]
+
+    # Handle base Qwen3-Reranker models
+    if model_name in BASE_MODELS:
+        entry = BASE_MODELS[model_name]
+        tokenizer = entry["tokenizer"]
+        model = entry["model"]
+
+        scores = []
+        with torch.no_grad():
+            for cand in pruned:
+                inputs = tokenizer(context, cand, return_tensors="pt")
+                if hasattr(model, 'device'):
+                    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+                outputs = model(**inputs)
+                # For reranker models, logits is typically a single value
+                if hasattr(outputs, 'logits'):
+                    score = outputs.logits.item()
+                else:
+                    score = 0.0
+                scores.append(score)
+
+        ranked = [
+            c for c, _ in sorted(
+                zip(pruned, scores),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+        ]
+
+        return {
+            "model": model_name,
+            "ranked_candidates": ranked,
+            "scores": scores,
+        }
+
+    # Handle CatBoost models
+    if model_name not in MODELS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Unknown model '{model_name}'",
+                "available_models": ALL_MODEL_KEYS,
+            },
+        )
 
     entry = MODELS[model_name]
     X = build_feature_matrix(context, pruned, entry["feature_names"])
@@ -287,4 +354,4 @@ def rank(req: RankRequest) -> Dict[str, Any]:
 # ==================================================
 @app.get("/models")
 def list_models():
-    return {"available_models": list(MODELS.keys())}
+    return {"available_models": ALL_MODEL_KEYS}

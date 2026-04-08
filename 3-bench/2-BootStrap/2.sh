@@ -11,7 +11,10 @@ set -x
 # Save logs to file + stdout
 exec > >(tee build.log) 2>&1
 
-echo "[INFO] Starting build"
+# Model to use (passed from parent script or default)
+BENCH_MODEL="${BENCH_MODEL:-catboost-base}"
+
+echo "[INFO] Starting build with model: $BENCH_MODEL"
 
 # =========================
 # Setup base image
@@ -48,10 +51,10 @@ echo "[INFO] AISorter baseline loaded"
 # =========================
 # Run AST benchmark
 # =========================
-echo "[INFO] Running AST benchmark"
+echo "[INFO] Running AST benchmark with model: $BENCH_MODEL"
 
 ./pharo Pharo.image eval --no-quit "
-Transcript show: 'Starting AST benchmark'; cr.
+Transcript show: 'Starting AST benchmark with model: $BENCH_MODEL'; cr.
 
 [
   CooStaticBenchmarksMessageSorter nec.
